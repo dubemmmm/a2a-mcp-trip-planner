@@ -1,0 +1,72 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "trip-planner"
+version = "0.1.0"
+description = "Multi-agent trip planning network using OpenAI Agents SDK, A2A, and MCP."
+requires-python = ">=3.11"
+readme = "README.md"
+
+[tool.setuptools.packages.find]
+include = ["shared*", "agents_local*", "agents_travel*", "agents_concierge*", "mcp_servers*", "_helpers*", "a2a_servers", "a2a_client"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["shared/tests"]
+pythonpath = ["shared/tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "-v",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:pydantic.*",
+    # Third-party deprecation warnings outside our control:
+    "ignore::DeprecationWarning:websockets.*",
+    "ignore::DeprecationWarning:uvicorn.*",
+    # anyio's MemoryObjectReceiveStream.__del__ raises after event loop teardown
+    # when uvicorn closes async streams in tests; ignore the unraisable noise.
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
+disallow_untyped_decorators = true
+plugins = ["pydantic.mypy"]
+files = ["shared", "agents_local"]
+exclude = ["shared/tests/"]
+ 
+[[tool.mypy.overrides]]
+module = ["agents.*", "mcp.*", "starlette.*", "uvicorn.*", "aiosqlite.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "mcp_servers.*"
+disallow_untyped_decorators = false
+disallow_untyped_calls = false
+ 
+[[tool.mypy.overrides]]
+module = "a2a_servers.*"
+disallow_untyped_calls = false
+warn_return_any = false
+
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
