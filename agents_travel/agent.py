@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 
 from agents import Agent
@@ -39,7 +40,14 @@ def build_travel_mcp_server(*, mcp_url: str | None = None) -> MCPServer:
             name=f"{TRAVEL_AGENT_NAME}-mcp",
         )
     return MCPServerStdio(
-        params={"command": sys.executable, "args": ["-m", "mcp_servers.travel"]},
+        # Pass the parent environment so the subprocess inherits secrets
+        # (e.g. OPENAI_API_KEY). MCPServerStdio otherwise uses a filtered
+        # default env that strips everything but PATH/HOME/etc.
+        params={
+            "command": sys.executable,
+            "args": ["-m", "mcp_servers.travel"],
+            "env": {**os.environ},
+        },
         name=f"{TRAVEL_AGENT_NAME}-mcp",
         cache_tools_list=True,
     )

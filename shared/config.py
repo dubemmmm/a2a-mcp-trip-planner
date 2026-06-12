@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     # --- External APIs (optional at Layer 1) ---
     serpapi_api_key: SecretStr | None = None
     google_places_api_key: SecretStr | None = None
+    google_routes_api_key: SecretStr | None = None
     openweather_api_key: SecretStr | None = None
     brave_api_key: SecretStr | None = None
     
@@ -67,6 +68,7 @@ _KEY_FIELDS: dict[str, str] = {
     "openai": "openai_api_key",
     "serpapi": "serpapi_api_key",
     "google_places": "google_places_api_key",
+    "google_routes": "google_routes_api_key",
     "openweather": "openweather_api_key",
     "brave": "brave_api_key",
 }

@@ -60,6 +60,28 @@ class TestTravelA2A:
         assert ids == {"search_flights", "search_hotels", "estimate_total_cost"}
 
 
+class TestTransitA2A:
+    def test_app_builds(self, env: None) -> None:
+        from a2a_servers.transit import build_app
+
+        app = build_app()
+        assert app is not None
+
+    def test_skill_ids(self, env: None) -> None:
+        from a2a_servers.transit import _skills
+
+        ids = {s.id for s in _skills()}
+        assert ids == {"get_route", "compare_modes", "total_travel_minutes"}
+
+    def test_skill_descriptions_non_empty(self, env: None) -> None:
+        from a2a_servers.transit import _skills
+
+        for skill in _skills():
+            assert skill.name
+            assert skill.description
+            assert len(skill.tags) > 0
+
+
 class TestConciergeA2A:
     def test_app_builds(self, env: None) -> None:
         from a2a_servers.concierge import build_app

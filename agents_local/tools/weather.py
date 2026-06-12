@@ -14,7 +14,12 @@ from ..clients.openweather import (
     ForecastInterval,
     OpenWeatherClient,
 )
-from ..models import DailyWeather, WeatherForecast
+from ..models import (
+    DailyWeather,
+    ForecastCoverage,
+    ForecastCoverageStatus,
+    WeatherForecast,
+)
 
 
 def _interval_date(interval: ForecastInterval) -> date:
@@ -42,6 +47,13 @@ def _aggregate_day(day: date, intervals: list[ForecastInterval]) -> DailyWeather
     )
 
 
+def _requested_dates(start_date: date, end_date: date) -> set[date]:
+    return {
+        date.fromordinal(ordinal)
+        for ordinal in range(start_date.toordinal(), end_date.toordinal())
+    }
+
+
 async def get_weather_forecast(
     client: OpenWeatherClient,
     city: str,
@@ -56,10 +68,9 @@ async def get_weather_forecast(
         start_date: First day (inclusive).
         end_date: Last day (exclusive — matches our date-range convention).
 
-    Notes:
-        Free-tier forecast only covers ~5 days from now. Days outside that
-        window are silently omitted; callers can detect this by comparing the
-        number of returned days to the requested span.
+    The response includes coverage metadata because the free-tier provider only
+    returns roughly five days. Callers can distinguish a complete forecast from
+    a partial response or a request entirely outside the available window.
     """
     if not city.strip():
         raise ValueError("city must be non-empty")
@@ -68,6 +79,25 @@ async def get_weather_forecast(
 
     geocode = await client.geocode(city)
     intervals = await client.forecast(geocode.lat, geocode.lon)
+
+    all_available_dates = {_interval_date(interval) for interval in intervals}
+    requested_dates = _requested_dates(start_date, end_date)
+    covered_requested_dates = requested_dates & all_available_dates
+
+    if requested_dates <= all_available_dates:
+        coverage_status = ForecastCoverageStatus.FULL
+    elif covered_requested_dates:
+        coverage_status = ForecastCoverageStatus.PARTIAL
+    else:
+        coverage_status = ForecastCoverageStatus.UNAVAILABLE
+
+    coverage = ForecastCoverage(
+        requested_start_date=start_date,
+        requested_end_date_exclusive=end_date,
+        available_start_date=min(all_available_dates) if all_available_dates else None,
+        available_end_date_inclusive=max(all_available_dates) if all_available_dates else None,
+        status=coverage_status,
+    )
 
     by_day: dict[date, list[ForecastInterval]] = defaultdict(list)
     for interval in intervals:
@@ -78,4 +108,4 @@ async def get_weather_forecast(
     daily = tuple(
         _aggregate_day(day, by_day[day]) for day in sorted(by_day) if by_day[day]
     )
-    return WeatherForecast(city=geocode.name, days=daily)
+    return WeatherForecast(city=geocode.name, coverage=coverage, days=daily)

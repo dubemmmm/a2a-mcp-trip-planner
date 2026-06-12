@@ -40,9 +40,10 @@ from shared.a2a_client import (
 
 _LOGGER = structlog.get_logger(__name__)
 
-# Skill ids match those declared in a2a_servers.travel and a2a_servers.local.
+# Skill ids match those declared in a2a_servers.travel/local/transit.
 TRAVEL_SKILL_ID = "search_flights"  # generic "do travel work" entry point
 LOCAL_SKILL_ID = "find_attractions"  # generic "do local research" entry point
+TRANSIT_SKILL_ID = "get_route"  # generic "get around the destination" entry point
 
 DEFAULT_DELEGATION_TIMEOUT_SECONDS = 120.0
 
@@ -149,15 +150,19 @@ def build_delegation_tools(
     *,
     travel_url: str,
     local_url: str,
+    transit_url: str | None = None,
     discovery: AgentDiscovery,
     client_factory: ClientFactory | None = None,
     timeout_seconds: float = DEFAULT_DELEGATION_TIMEOUT_SECONDS,
 ) -> list[FunctionTool]:
-    """Build the two delegation tools as a closure over the given URLs/clients.
+    """Build the delegation tools as a closure over the given URLs/clients.
 
     Args:
         travel_url: Public base URL of the Travel A2A server.
         local_url: Public base URL of the Local Experience A2A server.
+        transit_url: Public base URL of the Ground Transport A2A server. When
+            None, no `call_transit_agent` tool is built (lets callers run a
+            subset of specialists).
         discovery: Shared discovery cache. One per Concierge process is fine.
         client_factory: Optional override for testing. In production leave as
             None — each delegation call will create its own httpx client so
@@ -165,7 +170,8 @@ def build_delegation_tools(
         timeout_seconds: Per-delegation wall-time cap.
 
     Returns:
-        A list of two `FunctionTool`s ready to attach to the Concierge agent.
+        A list of `FunctionTool`s ready to attach to the Concierge agent —
+        one per specialist whose URL was provided.
     """
 
     @function_tool(
@@ -210,4 +216,32 @@ def build_delegation_tools(
             timeout_seconds=timeout_seconds,
         )
 
-    return [call_travel_agent, call_local_experience_agent]
+    tools: list[FunctionTool] = [call_travel_agent, call_local_experience_agent]
+
+    if transit_url is not None:
+
+        @function_tool(
+            name_override="call_transit_agent",
+            description_override=(
+                "Ask the Ground Transport specialist agent how to get around "
+                "a destination. Pass a clear natural-language request (e.g. "
+                "'fastest way from Lisbon Airport to Belem Tower, compare "
+                "transit, driving, and walking'). The specialist will return "
+                "a synthesized text response. Use this when the user's "
+                "question involves local routes, directions, or travel time "
+                "between places at the destination."
+            ),
+        )
+        async def call_transit_agent(request: str) -> str:
+            return await _delegate(
+                request=request,
+                agent_url=transit_url,
+                skill_id=TRANSIT_SKILL_ID,
+                discovery=discovery,
+                client_factory=client_factory,
+                timeout_seconds=timeout_seconds,
+            )
+
+        tools.append(call_transit_agent)
+
+    return tools

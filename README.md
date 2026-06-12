@@ -6,6 +6,10 @@ hotels, and a **Local Experience** agent that handles attractions, restaurants,
 and weather. They coordinate over A2A, each reaches its own tools over MCP, and
 the whole thing is built on the OpenAI Agents SDK.
 
+Read the accompanying Medium article: [Three Agents, One Protocol: What I
+Learned Building with A2A and
+MCP](https://medium.com/@chidubem.onwuchuluba/three-agents-one-protocol-what-i-learned-building-with-a2a-and-mcp-d64ac084272c).
+
 The rest of this README is mostly about *why* it's shaped the way it is. If you
 just want to run it, skip to [Running it](#running-it).
 

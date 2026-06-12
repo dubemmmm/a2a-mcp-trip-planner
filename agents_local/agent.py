@@ -11,6 +11,7 @@ lifecycle explicit and lets multiple call sites share one server connection.
 
 from __future__ import annotations
 
+import os
 import sys
 
 from agents import Agent
@@ -36,6 +37,9 @@ Guidelines:
     can verify the geography matches.
   * When tools return no results, say so plainly and suggest broadening the
     search rather than inventing places.
+  * Check the weather tool's `coverage.status`. If it is `partial` or
+    `unavailable`, state the requested and available date ranges explicitly;
+    never present seasonal expectations as a live forecast.
 """.strip()
 
 
@@ -51,7 +55,14 @@ def build_local_mcp_server(*, mcp_url: str | None = None) -> MCPServer:
             name=f"{LOCAL_AGENT_NAME}-mcp",
         )
     return MCPServerStdio(
-        params={"command": sys.executable, "args": ["-m", "mcp_servers.local"]},
+        # Pass the parent environment so the subprocess inherits secrets
+        # (e.g. OPENAI_API_KEY). MCPServerStdio otherwise uses a filtered
+        # default env that strips everything but PATH/HOME/etc.
+        params={
+            "command": sys.executable,
+            "args": ["-m", "mcp_servers.local"],
+            "env": {**os.environ},
+        },
         name=f"{LOCAL_AGENT_NAME}-mcp",
         cache_tools_list=True,
     )

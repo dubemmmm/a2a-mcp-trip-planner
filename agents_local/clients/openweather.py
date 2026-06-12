@@ -100,9 +100,11 @@ class OpenWeatherClient:
         """
         if not city.strip():
             raise ValueError("city must be non-empty")
-        
         if not self._api_key:
-            ValueError("api_key must be a non-empty string")
+            raise WeatherAPIError(
+                "OpenWeather API key is not configured. "
+                "Set OPENWEATHER_API_KEY in your environment."
+            )
 
         params: dict[str, str | int | float] = {
             "q": city,
@@ -135,14 +137,17 @@ class OpenWeatherClient:
 
     async def forecast(self, lat: float, lon: float) -> tuple[ForecastInterval, ...]:
         """Return 3-hour-interval forecast (~5 days)."""
+        if not self._api_key:
+            raise WeatherAPIError(
+                "OpenWeather API key is not configured. "
+                "Set OPENWEATHER_API_KEY in your environment."
+            )
         params: dict[str, str | int | float] = {
             "lat": lat,
             "lon": lon,
             "appid": self._api_key,
             "units": "metric",
         }
-        if not self._api_key:
-            ValueError("api_key must be a non-empty string")
         try:
             response = await self._http.get(_FORECAST_URL, params=params)
         except httpx.HTTPError as e:

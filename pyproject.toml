@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 readme = "README.md"
 
 [tool.setuptools.packages.find]
-include = ["shared*", "agents_local*", "agents_travel*", "agents_concierge*", "mcp_servers*", "_helpers*", "a2a_servers", "a2a_client"]
+include = ["shared*", "agents_local*", "agents_travel*", "agents_transit*", "agents_concierge*", "mcp_servers*", "_helpers*", "a2a_servers", "a2a_client"]
 exclude = ["tests*"]
 
 [tool.pytest.ini_options]
@@ -18,6 +18,9 @@ testpaths = ["shared/tests"]
 pythonpath = ["shared/tests"]
 python_files = ["test_*.py"]
 asyncio_mode = "auto"
+markers = [
+    "live: tests that hit live services/networks (deselect with '-m \"not live\"')",
+]
 addopts = [
     "-ra",
     "--strict-markers",

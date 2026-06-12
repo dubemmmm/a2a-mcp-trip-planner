@@ -89,7 +89,11 @@ def build_server(
             ),
             types.Tool(
                 name="get_weather_forecast",
-                description="Get daily weather forecast for a city between two dates (end exclusive).",
+                description=(
+                    "Get a daily weather forecast for a city between two dates "
+                    "(end exclusive), including explicit requested-range, "
+                    "provider-availability, and coverage-status metadata."
+                ),
                 inputSchema={
                     "type": "object",
                     "properties": {

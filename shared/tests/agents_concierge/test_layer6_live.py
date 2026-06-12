@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -40,6 +40,7 @@ from agents_concierge.delegation import build_delegation_tools
 from agents_concierge.store.sqlite_store import ConciergeStore
 from mcp_servers.concierge import build_server as build_concierge_mcp_server
 from mcp_servers.scaffolding import serve_stdio  # noqa: F401  (imported for typing)
+from shared import config as config_module
 from shared.a2a_client import AgentDiscovery
 from shared.agent_runner import run_agent_task
 from _helpers.fake_model import FakeModel
@@ -147,9 +148,15 @@ async def specialists() -> AsyncIterator[tuple[str, str]]:
             yield travel_url, local_url
 
 
+# Captured at import (collection) time, *before* the autouse `clean_env`
+# fixture wipes OPENAI_API_KEY from the environment for each test. The live
+# test restores it via `_restore_real_key` below.
+_REAL_OPENAI_KEY = os.environ.get("OPENAI_API_KEY", "")
+
+
 def _real_openai_key_present() -> bool:
-    """True if a real-looking OpenAI key is in the environment."""
-    key = os.environ.get("OPENAI_API_KEY", "")
+    """True if a real-looking OpenAI key was in the environment at import."""
+    key = _REAL_OPENAI_KEY
     # Treat obvious test sentinels as 'not real'.
     return bool(key) and not key.startswith("sk-test")
 
@@ -159,6 +166,22 @@ def _real_openai_key_present() -> bool:
     reason="No real OPENAI_API_KEY in env; live test skipped.",
 )
 class TestLayer6LiveEndToEnd:
+    @pytest.fixture(autouse=True)
+    def _restore_real_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> Iterator[None]:
+        """Re-inject the real key that `clean_env` (autouse) wiped.
+
+        `clean_env` runs first (it's defined in the conftest, a higher
+        scope), deleting OPENAI_API_KEY so unit tests get a clean slate.
+        This class-level autouse fixture runs after it and puts the real
+        key back so the live agent loop can reach OpenAI.
+        """
+        monkeypatch.setenv("OPENAI_API_KEY", _REAL_OPENAI_KEY)
+        config_module.reset_settings_cache()
+        yield
+        config_module.reset_settings_cache()
+
     async def test_concierge_delegates_to_both_specialists(
         self, specialists: tuple[str, str], tmp_path: Any
     ) -> None:

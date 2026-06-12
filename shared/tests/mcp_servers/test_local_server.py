@@ -19,7 +19,6 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
-import pytest
 import pytest_asyncio
 import respx
 from mcp.shared.memory import create_connected_server_and_client_session
@@ -233,6 +232,13 @@ class TestWeatherTool:
             )
         payload = json.loads(result.content[0].text)  # type: ignore[union-attr]
         assert payload["city"] == "Lisbon"
+        assert payload["coverage"] == {
+            "requested_start_date": "2026-05-10",
+            "requested_end_date_exclusive": "2026-05-14",
+            "available_start_date": "2026-05-11",
+            "available_end_date_inclusive": "2026-05-12",
+            "status": "partial",
+        }
         assert len(payload["days"]) == 2
 
 

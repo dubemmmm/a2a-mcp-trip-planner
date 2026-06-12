@@ -25,3 +25,4 @@ htmlcov/
 
 # Scratch message payloads
 scripts/a2a_msg*.json
+deployment-strategy.txt

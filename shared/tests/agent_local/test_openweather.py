@@ -43,6 +43,11 @@ class TestClientConstruction:
 
 
 class TestGeocode:
+    async def test_missing_key_raises_clear_error(self) -> None:
+        async with OpenWeatherClient(None) as client:
+            with pytest.raises(WeatherAPIError, match="OPENWEATHER_API_KEY"):
+                await client.geocode("Lisbon")
+
     @respx.mock
     async def test_returns_first_result(self) -> None:
         respx.get(_GEO_URL).mock(
@@ -90,6 +95,11 @@ class TestGeocode:
 
 
 class TestForecast:
+    async def test_missing_key_raises_clear_error(self) -> None:
+        async with OpenWeatherClient(None) as client:
+            with pytest.raises(WeatherAPIError, match="OPENWEATHER_API_KEY"):
+                await client.forecast(38.7, -9.1)
+
     @respx.mock
     async def test_returns_intervals(self) -> None:
         respx.get(_FORECAST_URL).mock(

@@ -13,6 +13,7 @@ Two flavors of construction:
 
 from __future__ import annotations
 
+import os
 import sys
 
 from agents import Agent, FunctionTool
@@ -62,11 +63,14 @@ Specialist agents (call via A2A):
     agent has access to real flight and hotel search; ask in natural language.
   * `call_local_experience_agent(request)` — attractions, restaurants, weather.
     Use for anything about what to do at the destination or local conditions.
+  * `call_transit_agent(request)` — local routes, directions, and travel time
+    between places at the destination (transit, driving, walking, cycling).
+    Use for getting around once the traveler has arrived.
 
 How to plan a trip:
   1. If you have a user_id, fetch preferences first.
-  2. Decompose the user's request. Most full trips need BOTH specialists:
-     one for travel/lodging, one for things to do and weather.
+  2. Decompose the user's request. Most full trips need several specialists:
+     travel/lodging, things to do and weather, and getting around.
   3. Send each specialist a focused request with the destination, dates, and
      constraints. Run them in whatever order makes sense — they are
      independent, so you can call both in the same turn.
@@ -90,7 +94,14 @@ def build_concierge_mcp_server(*, mcp_url: str | None = None) -> MCPServer:
             name=f"{CONCIERGE_AGENT_NAME}-mcp",
         )
     return MCPServerStdio(
-        params={"command": sys.executable, "args": ["-m", "mcp_servers.concierge"]},
+        # Pass the parent environment so the subprocess inherits secrets
+        # (e.g. OPENAI_API_KEY). MCPServerStdio otherwise uses a filtered
+        # default env that strips everything but PATH/HOME/etc.
+        params={
+            "command": sys.executable,
+            "args": ["-m", "mcp_servers.concierge"],
+            "env": {**os.environ},
+        },
         name=f"{CONCIERGE_AGENT_NAME}-mcp",
         cache_tools_list=True,
     )

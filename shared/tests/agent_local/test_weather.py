@@ -65,6 +65,11 @@ class TestGetWeatherForecast:
             )
 
         assert forecast.city == "Lisbon"
+        assert forecast.coverage.requested_start_date == date(2026, 5, 10)
+        assert forecast.coverage.requested_end_date_exclusive == date(2026, 5, 14)
+        assert forecast.coverage.available_start_date == d1
+        assert forecast.coverage.available_end_date_inclusive == d2
+        assert forecast.coverage.status.value == "partial"
         assert len(forecast.days) == 2
         # Highs and lows aggregated correctly
         assert forecast.days[0].date == d1
@@ -92,6 +97,9 @@ class TestGetWeatherForecast:
         # Only d_inside falls in the requested window.
         assert len(forecast.days) == 1
         assert forecast.days[0].date == d_inside
+        assert forecast.coverage.status.value == "partial"
+        assert forecast.coverage.available_start_date == d_inside
+        assert forecast.coverage.available_end_date_inclusive == d_outside
 
     @respx.mock
     async def test_end_date_is_exclusive(self) -> None:
@@ -107,6 +115,9 @@ class TestGetWeatherForecast:
                 client, "Lisbon", date(2026, 5, 10), date(2026, 5, 14)
             )
         assert forecast.days == ()
+        assert forecast.coverage.status.value == "unavailable"
+        assert forecast.coverage.available_start_date == d
+        assert forecast.coverage.available_end_date_inclusive == d
 
     @respx.mock
     async def test_empty_forecast_returns_empty_days(self) -> None:
@@ -121,6 +132,26 @@ class TestGetWeatherForecast:
             )
         assert forecast.days == ()
         assert forecast.city == "Lisbon"
+        assert forecast.coverage.status.value == "unavailable"
+        assert forecast.coverage.available_start_date is None
+        assert forecast.coverage.available_end_date_inclusive is None
+
+    @respx.mock
+    async def test_full_coverage_is_reported_explicitly(self) -> None:
+        d1 = date(2026, 5, 11)
+        d2 = date(2026, 5, 12)
+        intervals = [_interval(d1, 12), _interval(d2, 12)]
+        respx.get(_GEO_URL).mock(return_value=httpx.Response(200, json=_geo_body()))
+        respx.get(_FORECAST_URL).mock(
+            return_value=httpx.Response(200, json={"list": intervals})
+        )
+
+        async with OpenWeatherClient("k") as client:
+            forecast = await get_weather_forecast(
+                client, "Lisbon", d1, date(2026, 5, 13)
+            )
+
+        assert forecast.coverage.status.value == "full"
 
     async def test_empty_city_rejected(self) -> None:
         async with OpenWeatherClient("k") as client:
