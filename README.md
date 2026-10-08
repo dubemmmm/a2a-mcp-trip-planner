@@ -207,6 +207,23 @@ uvicorn a2a_servers.concierge:_uvicorn_app --factory --env-file .env --host 0.0.
 uvicorn a2a_servers.transit:_uvicorn_app --factory --env-file .env --host 0.0.0.0 --port 8004
 ```
 
+### Run the ledger (agent economy)
+
+Agent-to-agent calls are being made paid: each agent has a wallet, the
+specialist quotes a price, the Concierge's credits are held in escrow while the
+work runs, and they are paid out only if the task completes. The ledger is the
+only thing that moves credits; agents hold keys, not money. Set the
+`AGENT_KEY_*` and `ECONOMY_ADMIN_KEY` values in `.env`, then:
+
+```bash
+uvicorn economy.service:_uvicorn_app --factory --env-file .env --host 127.0.0.1 --port 8005
+```
+
+On startup it creates the four wallets and grants the Concierge its daily
+allowance (`ECONOMY_DAILY_ALLOWANCE_MC`, in millicredits). A background sweeper
+returns holds nobody settled. Amounts are integers in millicredits
+(1 credit = 1000 mc). Agents call it through `economy.client.LedgerClient`.
+
 ### Run the public web app
 
 Start the Travel, Local Experience, and Transit A2A servers, then run:
@@ -275,6 +292,13 @@ agents_concierge/             # Concierge: store, user-data tools, delegation, a
 mcp_servers/                  # ring 2 — one MCP server per agent
 a2a_servers/                  # ring 4 — one A2A server per agent
 
+economy/                      # agent economy: the ledger and its service
+├── ledger.py                 # Ledger — wallets, quotes, escrowed reservations, journal
+├── service.py                # HTTP service on :8005, agent-key auth, expiry sweeper
+├── client.py                 # LedgerClient — typed errors, fail-closed
+├── models.py
+└── errors.py
+
 shared/tests/                 # mirrors the source tree
 ```
 
@@ -299,3 +323,7 @@ orchestration on top.
 | 5.3 Task polling and streaming | done |
 | 5.4 Input-required handling | deferred (needs the server-side pause/resume) |
 | 6   Concierge orchestration (delegation tools + orchestrating agent) | in progress |
+| E1  Agent economy: ledger + service | done |
+| E2  Pricing on Agent Cards + metering | next |
+| E3  Paid delegation (quote → reserve → settle) | planned |
+| E4  Budget-aware Concierge + wallet UI | planned |

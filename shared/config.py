@@ -60,6 +60,21 @@ class Settings(BaseSettings):
     local_a2a_url: str = "http://127.0.0.1:8001"
     transit_a2a_url: str = "http://127.0.0.1:8004"
 
+    # -- Agent economy --
+    # One shared-secret key per agent; the ledger holds them all, each agent
+    # only its own. Missing keys mean that agent cannot use the ledger.
+    ledger_url: str = "http://127.0.0.1:8005"
+    ledger_db_path: str = "ledger.db"
+    economy_admin_key: SecretStr | None = None
+    agent_key_concierge: SecretStr | None = None
+    agent_key_travel: SecretStr | None = None
+    agent_key_local: SecretStr | None = None
+    agent_key_transit: SecretStr | None = None
+    economy_daily_allowance_mc: int = Field(default=50_000, ge=0)
+    economy_daily_cap_mc: int = Field(default=50_000, ge=0)
+    economy_hold_seconds: float = Field(default=180.0, gt=0)
+    economy_sweep_interval_seconds: float = Field(default=30.0, gt=0)
+
     # -- Public web app --
     web_plan_timeout_seconds: float = Field(default=360.0, gt=0)
     web_max_turns: int = Field(default=18, ge=1, le=50)

@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 readme = "README.md"
 
 [tool.setuptools.packages.find]
-include = ["shared*", "agents_local*", "agents_travel*", "agents_transit*", "agents_concierge*", "mcp_servers*", "_helpers*", "a2a_servers", "a2a_client", "web*"]
+include = ["shared*", "agents_local*", "agents_travel*", "agents_transit*", "agents_concierge*", "mcp_servers*", "_helpers*", "a2a_servers", "a2a_client", "web*", "economy*"]
 exclude = ["tests*"]
 
 [tool.pytest.ini_options]
@@ -51,7 +51,7 @@ warn_unused_ignores = true
 warn_return_any = true
 disallow_untyped_decorators = true
 plugins = ["pydantic.mypy"]
-files = ["shared", "agents_local"]
+files = ["shared", "agents_local", "economy"]
 exclude = ["shared/tests/"]
  
 [[tool.mypy.overrides]]
