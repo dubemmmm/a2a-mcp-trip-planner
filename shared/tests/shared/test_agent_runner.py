@@ -13,6 +13,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from agents import Agent
+from agents.items import ToolCallItem, ToolCallOutputItem
+from agents.stream_events import RunItemStreamEvent
 
 from shared.agent_runner import (
     DEFAULT_TIMEOUT_SECONDS,
@@ -20,6 +22,7 @@ from shared.agent_runner import (
     AgentTaskTimeout,
     run_agent_task,
 )
+from shared.agent_events import AgentEventQueue
 from shared.logging_setup import setup_logger
 
 
@@ -40,6 +43,7 @@ def _bare_agent(name: str = "test-agent") -> Agent[None]:
 
 # ---------- argument validation ----------
 
+
 class TestArgValidation:
     async def test_negative_timeout_rejected(self, env: None) -> None:
         with pytest.raises(ValueError, match="timeout"):
@@ -51,6 +55,7 @@ class TestArgValidation:
 
 
 # ---------- patched-Runner unit tests ----------
+
 
 class TestPatchedSuccess:
     async def test_returns_outcome(self, env: None) -> None:
@@ -127,9 +132,7 @@ class TestPatchedLogging:
         assert "agent_task_success" in err
         assert "the-agent" in err
 
-    async def test_logs_failure(
-        self, env: None, capfd: pytest.CaptureFixture[str]
-    ) -> None:
+    async def test_logs_failure(self, env: None, capfd: pytest.CaptureFixture[str]) -> None:
         setup_logger("test")
 
         async def _raise(*args: Any, **kwargs: Any) -> Any:
@@ -143,6 +146,7 @@ class TestPatchedLogging:
 
 
 # ---------- HTTP-level smoke (real Runner + FakeModel) ----------
+
 
 class TestRealRunner:
     """Runs the actual SDK Runner against a FakeModel. No external calls."""
@@ -158,3 +162,52 @@ class TestRealRunner:
         outcome = await run_agent_task(agent, "say hi")
         text = str(outcome.result.final_output_as(str))
         assert "Hello, traveler." in text
+
+    async def test_event_queue_receives_agent_lifecycle(self, env: None) -> None:
+        queue: AgentEventQueue = asyncio.Queue()
+        agent = _bare_agent("live-agent")
+
+        class _StreamingResult:
+            async def stream_events(self):  # type: ignore[no-untyped-def]
+                yield RunItemStreamEvent(
+                    name="tool_called",
+                    item=ToolCallItem(
+                        agent=agent,
+                        raw_item={
+                            "type": "function_call",
+                            "name": "call_travel_agent",
+                            "call_id": "call-1",
+                            "arguments": "{}",
+                        },
+                    ),
+                )
+                yield RunItemStreamEvent(
+                    name="tool_output",
+                    item=ToolCallOutputItem(
+                        agent=agent,
+                        raw_item={
+                            "type": "function_call_output",
+                            "call_id": "call-1",
+                            "output": "Flights ready",
+                        },
+                        output="Flights ready",
+                    ),
+                )
+
+        with patch(
+            "shared.agent_runner.Runner.run_streamed",
+            return_value=_StreamingResult(),
+        ):
+            await run_agent_task(agent, "finish", event_queue=queue)
+
+        events = []
+        while not queue.empty():
+            events.append(queue.get_nowait())
+        assert [event.kind for event in events] == [
+            "agent.status",
+            "tool.called",
+            "tool.completed",
+            "agent.status",
+        ]
+        assert events[1].data["tool_name"] == "call_travel_agent"
+        assert events[2].data["preview"] == "Flights ready"

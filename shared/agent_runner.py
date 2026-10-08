@@ -23,7 +23,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import structlog
-from agents import Agent, RunResult, Runner
+from agents import Agent, RunResult, RunResultStreaming, Runner
+from agents.items import ToolCallItem, ToolCallOutputItem
+
+from .agent_events import AgentEventQueue, emit_agent_event
 
 _LOGGER = structlog.get_logger(__name__)
 
@@ -51,7 +54,7 @@ class AgentTaskTimeout(AgentTaskError):
 class AgentTaskOutcome:
     """A successful run plus the metadata we logged about it."""
 
-    result: RunResult
+    result: RunResult | RunResultStreaming
     duration_seconds: float
 
 
@@ -62,6 +65,7 @@ async def run_agent_task(
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     max_turns: int = 10,
     logger: structlog.stdlib.BoundLogger | None = None,
+    event_queue: AgentEventQueue | None = None,
 ) -> AgentTaskOutcome:
     """Run `agent` against `task_input` with logging, timeout, and error normalization.
 
@@ -71,6 +75,9 @@ async def run_agent_task(
         timeout_seconds: Hard wall-time cap. Defaults to 60s.
         max_turns: Cap on agent loop iterations (forwarded to Runner.run).
         logger: Optional pre-bound logger; falls back to module logger.
+        event_queue: Optional in-process queue for live execution events. When
+            supplied, the SDK streaming runner is used so tool calls and tool
+            outputs can be observed as they happen.
 
     Returns:
         AgentTaskOutcome containing the SDK's RunResult and duration.
@@ -91,29 +98,114 @@ async def run_agent_task(
         max_turns=max_turns,
     )
     log.info("agent_task_start", input_length=len(task_input))
+    emit_agent_event(
+        event_queue,
+        kind="agent.status",
+        agent=agent.name,
+        status="working",
+        message=f"{agent.name.title()} started working",
+    )
     started_at = time.monotonic()
 
     try:
-        result = await asyncio.wait_for(
-            Runner.run(agent, task_input, max_turns=max_turns),
-            timeout=timeout_seconds,
-        )
+        if event_queue is None:
+            result: RunResult | RunResultStreaming = await asyncio.wait_for(
+                Runner.run(agent, task_input, max_turns=max_turns),
+                timeout=timeout_seconds,
+            )
+        else:
+            result = await asyncio.wait_for(
+                _run_streamed(
+                    agent,
+                    task_input,
+                    max_turns=max_turns,
+                    event_queue=event_queue,
+                ),
+                timeout=timeout_seconds,
+            )
     except asyncio.TimeoutError as e:
         duration = time.monotonic() - started_at
         log.warning("agent_task_timeout", duration_seconds=duration)
-        raise AgentTaskTimeout(
-            f"agent {agent.name!r} exceeded {timeout_seconds}s"
-        ) from e
+        emit_agent_event(
+            event_queue,
+            kind="agent.status",
+            agent=agent.name,
+            status="failed",
+            message=f"{agent.name.title()} timed out",
+        )
+        raise AgentTaskTimeout(f"agent {agent.name!r} exceeded {timeout_seconds}s") from e
     except AgentTaskError:
         # Already normalized (e.g. by a nested run); don't double-wrap.
         raise
     except Exception as e:
         duration = time.monotonic() - started_at
         log.exception("agent_task_error", duration_seconds=duration)
+        emit_agent_event(
+            event_queue,
+            kind="agent.status",
+            agent=agent.name,
+            status="failed",
+            message=f"{agent.name.title()} could not complete the task",
+            data={"error": str(e)},
+        )
         raise AgentTaskError(
             f"agent {agent.name!r} failed: {type(e).__name__}: {e}", cause=e
         ) from e
 
     duration = time.monotonic() - started_at
     log.info("agent_task_success", duration_seconds=duration)
+    emit_agent_event(
+        event_queue,
+        kind="agent.status",
+        agent=agent.name,
+        status="completed",
+        message=f"{agent.name.title()} finished the plan",
+        data={"duration_seconds": duration},
+    )
     return AgentTaskOutcome(result=result, duration_seconds=duration)
+
+
+async def _run_streamed(
+    agent: Agent[Any],
+    task_input: str,
+    *,
+    max_turns: int,
+    event_queue: AgentEventQueue,
+) -> RunResultStreaming:
+    """Drain semantic SDK events while retaining the final streaming result."""
+    result = Runner.run_streamed(agent, task_input, max_turns=max_turns)
+    tool_names: dict[str, str] = {}
+
+    async for event in result.stream_events():
+        if event.type != "run_item_stream_event":
+            continue
+        if event.name == "tool_called" and isinstance(event.item, ToolCallItem):
+            tool_name = event.item.tool_name or "tool"
+            if event.item.call_id:
+                tool_names[event.item.call_id] = tool_name
+            emit_agent_event(
+                event_queue,
+                kind="tool.called",
+                agent=agent.name,
+                status="working",
+                message=f"Calling {tool_name.replace('_', ' ')}",
+                data={"tool_name": tool_name, "call_id": event.item.call_id},
+            )
+        elif event.name == "tool_output" and isinstance(event.item, ToolCallOutputItem):
+            call_id = event.item.call_id
+            tool_name = tool_names.get(call_id or "", "tool")
+            output = str(event.item.output)
+            emit_agent_event(
+                event_queue,
+                kind="tool.completed",
+                agent=agent.name,
+                status="working",
+                message=f"{tool_name.replace('_', ' ').title()} returned",
+                data={
+                    "tool_name": tool_name,
+                    "call_id": call_id,
+                    "preview": output[:240],
+                },
+            )
+
+    return result

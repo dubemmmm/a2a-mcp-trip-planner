@@ -28,9 +28,10 @@ from a2a.client import Client
 from a2a.types import (
     GetTaskRequest,
     StreamResponse,
-    Task,
     TaskState,
 )
+
+from shared.agent_events import AgentEventQueue, emit_agent_event
 
 from .submission import TaskHandle
 
@@ -129,7 +130,11 @@ def _extract_artifact_text(event: StreamResponse) -> tuple[str, ...]:
 
 
 async def _await_stream(
-    handle: TaskHandle, *, timeout_seconds: float
+    handle: TaskHandle,
+    *,
+    timeout_seconds: float,
+    event_queue: AgentEventQueue | None,
+    event_agent_name: str | None,
 ) -> TaskResult:
     """Stream-mode wait: consume events until terminal state."""
     started_at = time.monotonic()
@@ -153,8 +158,32 @@ async def _await_stream(
             state = _extract_state(event)
             if state is not None:
                 last_state = state
-            for text in _extract_artifact_text(event):
+                status = TaskState.Name(state).removeprefix("TASK_STATE_").lower()
+                emit_agent_event(
+                    event_queue,
+                    kind="agent.status",
+                    agent=event_agent_name or handle.agent_card.name,
+                    status=status,
+                    message=(
+                        f"{(event_agent_name or handle.agent_card.name).title()} "
+                        f"is {status.replace('_', ' ')}"
+                    ),
+                    data={"task_id": task_id, "skill_id": handle.skill_id},
+                )
+            artifact_text = _extract_artifact_text(event)
+            for text in artifact_text:
                 collected_text.append(text)
+            if artifact_text:
+                emit_agent_event(
+                    event_queue,
+                    kind="agent.artifact",
+                    agent=event_agent_name or handle.agent_card.name,
+                    status="working",
+                    message=(
+                        f"{(event_agent_name or handle.agent_card.name).title()} returned research"
+                    ),
+                    data={"task_id": task_id, "preview": "\n".join(artifact_text)[:240]},
+                )
             if last_state in _TERMINAL_STATES:
                 return
 
@@ -163,15 +192,12 @@ async def _await_stream(
     except asyncio.TimeoutError as e:
         log.warning("a2a_task_wait_timeout", duration=time.monotonic() - started_at)
         raise TaskWaitTimeout(
-            f"task {task_id or '<unknown>'} did not terminate within "
-            f"{timeout_seconds}s"
+            f"task {task_id or '<unknown>'} did not terminate within {timeout_seconds}s"
         ) from e
 
     duration = time.monotonic() - started_at
     if last_state is None or task_id is None:
-        raise TaskWaitError(
-            "task stream closed without reporting a terminal state"
-        )
+        raise TaskWaitError("task stream closed without reporting a terminal state")
 
     if last_state not in _TERMINAL_STATES:
         # The stream ended but we never saw a terminal event. This is the
@@ -231,9 +257,7 @@ async def _await_poll(
                     task_id = tid
                     break
     except asyncio.TimeoutError as e:
-        raise TaskWaitTimeout(
-            f"never received a task id within {timeout_seconds}s"
-        ) from e
+        raise TaskWaitTimeout(f"never received a task id within {timeout_seconds}s") from e
 
     if task_id is None:
         raise TaskWaitError("event stream closed before yielding a task id")
@@ -245,9 +269,7 @@ async def _await_poll(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             log.warning("a2a_task_wait_timeout", duration=time.monotonic() - started_at)
-            raise TaskWaitTimeout(
-                f"task {task_id} did not terminate within {timeout_seconds}s"
-            )
+            raise TaskWaitTimeout(f"task {task_id} did not terminate within {timeout_seconds}s")
         try:
             task = await asyncio.wait_for(
                 client.get_task(GetTaskRequest(id=task_id)),
@@ -262,16 +284,9 @@ async def _await_poll(
         state = int(task.status.state)
         if state in _TERMINAL_STATES:
             duration = time.monotonic() - started_at
-            artifact_text = tuple(
-                p.text
-                for a in task.artifacts
-                for p in a.parts
-                if p.text
-            )
+            artifact_text = tuple(p.text for a in task.artifacts for p in a.parts if p.text)
             if state != TaskState.TASK_STATE_COMPLETED:
-                raise TaskFailedError(
-                    f"task {task_id} terminated with state {state}", state=state
-                )
+                raise TaskFailedError(f"task {task_id} terminated with state {state}", state=state)
             log.info(
                 "a2a_task_completed",
                 duration=duration,
@@ -294,6 +309,8 @@ async def await_task(
     timeout_seconds: float = DEFAULT_AWAIT_TIMEOUT_SECONDS,
     poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
     client: Client | None = None,
+    event_queue: AgentEventQueue | None = None,
+    event_agent_name: str | None = None,
 ) -> TaskResult:
     """Wait for the task referenced by `handle` to reach a terminal state.
 
@@ -313,7 +330,12 @@ async def await_task(
     if timeout_seconds <= 0:
         raise ValueError("timeout_seconds must be > 0")
     if mode == "stream":
-        return await _await_stream(handle, timeout_seconds=timeout_seconds)
+        return await _await_stream(
+            handle,
+            timeout_seconds=timeout_seconds,
+            event_queue=event_queue,
+            event_agent_name=event_agent_name,
+        )
     if mode == "poll":
         if client is None:
             raise ValueError("poll mode requires `client`")

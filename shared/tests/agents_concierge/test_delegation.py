@@ -7,6 +7,7 @@ the closure pattern produces the right tool names and descriptions.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -34,9 +35,11 @@ from shared.a2a_client import (
     AgentDiscovery,
     AgentNotFoundError,
 )
+from shared.agent_events import AgentEventQueue
 
 
 # ---------- helpers ----------
+
 
 def _card(name: str = "travel", skill_ids: tuple[str, ...] = ("search_flights",)) -> AgentCard:
     return AgentCard(
@@ -85,6 +88,7 @@ def _mock_factory_with_events(events: list[StreamResponse]):
 
 # ---------- _delegate happy path ----------
 
+
 class TestDelegateSuccess:
     async def test_returns_artifact_text(self) -> None:
         card = _card()
@@ -105,15 +109,40 @@ class TestDelegateSuccess:
         # The client must be closed even on success.
         client.close.assert_awaited_once()
 
+    async def test_publishes_specialist_lifecycle(self) -> None:
+        card = _card()
+        discovery = _mock_discovery_returning(card)
+        factory, _client = _mock_factory_with_events(
+            [_completed_event("t1", "Flight options ready")]
+        )
+        queue: AgentEventQueue = asyncio.Queue()
+
+        await _delegate(
+            request="find flights",
+            agent_url="http://travel:8002",
+            skill_id="search_flights",
+            discovery=discovery,
+            client_factory=factory,
+            timeout_seconds=5.0,
+            event_queue=queue,
+            event_agent_name="travel",
+        )
+
+        published = []
+        while not queue.empty():
+            published.append(queue.get_nowait())
+        assert published[0].status == "requested"
+        assert any(event.status == "completed" for event in published)
+        assert any(event.kind == "agent.artifact" for event in published)
+
 
 # ---------- _delegate failure paths ----------
+
 
 class TestDelegateDiscoveryFailure:
     async def test_discovery_failure_surfaces_as_delegation_error(self) -> None:
         discovery = MagicMock(spec=AgentDiscovery)
-        discovery.discover = AsyncMock(
-            side_effect=AgentNotFoundError("connection refused")
-        )
+        discovery.discover = AsyncMock(side_effect=AgentNotFoundError("connection refused"))
         factory = MagicMock()
         with pytest.raises(DelegationError, match="could not reach"):
             await _delegate(
@@ -209,6 +238,7 @@ class TestDelegateRemoteFailure:
 
 # ---------- build_delegation_tools ----------
 
+
 class TestBuildDelegationTools:
     def test_returns_two_function_tools(self) -> None:
         discovery = MagicMock(spec=AgentDiscovery)
@@ -238,9 +268,7 @@ class TestBuildDelegationTools:
         card = _card(name="travel")
         discovery = MagicMock(spec=AgentDiscovery)
         discovery.discover = AsyncMock(return_value=card)
-        factory, client = _mock_factory_with_events(
-            [_completed_event("t1", "ok")]
-        )
+        factory, client = _mock_factory_with_events([_completed_event("t1", "ok")])
 
         # We test the closure indirectly: build the tools and then exercise
         # the underlying _delegate by calling the closed-over URL through

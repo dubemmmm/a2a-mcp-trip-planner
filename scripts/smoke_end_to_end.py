@@ -29,6 +29,8 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import time
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -40,8 +42,9 @@ from a2a_servers.transit import build_app as build_transit_a2a_app
 from a2a_servers.travel import build_app as build_travel_a2a_app
 from agents_concierge.agent import build_orchestrating_concierge
 from agents_concierge.delegation import build_delegation_tools
+from agents_concierge.models import TripPlanResponse
 from shared.a2a_client import AgentDiscovery
-from shared.agent_runner import run_agent_task
+from shared.output_validation import validate_agent_output
 
 load_dotenv()
 
@@ -70,12 +73,12 @@ def _check_keys() -> None:
 
 
 @asynccontextmanager
-async def _serve(app: Any, port: int, name: str):
+async def _serve(app: Any, port: int, name: str) -> AsyncIterator[str]:
     config = uvicorn.Config(
         app, host="127.0.0.1", port=port, log_level="warning", lifespan="on"
     )
     server = uvicorn.Server(config)
-    server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
+    server.install_signal_handlers = lambda: None  # type: ignore[attr-defined]
     task = asyncio.create_task(server.serve())
     for _ in range(200):
         if server.started:
@@ -120,6 +123,7 @@ async def main() -> None:
                         timeout_seconds=180.0,
                     )
                     agent = build_orchestrating_concierge(tools)
+                    mcp_server: Any = agent.mcp_servers[0]
 
                     prompt = (
                         "I'd like to visit Lisbon for 4 days, departing from ATL "
@@ -136,14 +140,21 @@ async def main() -> None:
                     print("Running Concierge orchestration...")
                     print("=" * 70)
 
-                    async with agent.mcp_servers[0]:
-                        outcome = await run_agent_task(
-                            agent, prompt, timeout_seconds=360.0, max_turns=18
+                    started_at = time.monotonic()
+                    async with mcp_server:
+                        validated = await validate_agent_output(
+                            agent,
+                            prompt,
+                            TripPlanResponse,
+                            timeout_seconds=360.0,
+                            max_turns=18,
                         )
 
-                    print(str(outcome.result.final_output_as(str)))
+                    print(validated.value.model_dump_json(indent=2))
                     print("=" * 70)
-                    print(f"\nDone in {outcome.duration_seconds:.1f}s.")
+                    print(f"\nDone in {time.monotonic() - started_at:.1f}s.")
+                    if validated.retried:
+                        print("The Concierge retried once to satisfy the response schema.")
                 finally:
                     await discovery.aclose()
 

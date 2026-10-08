@@ -24,6 +24,7 @@ from agents import Agent
 from agents.exceptions import ModelBehaviorError
 from pydantic import BaseModel
 
+from .agent_events import AgentEventQueue
 from .agent_runner import AgentTaskError, run_agent_task
 
 _LOGGER = structlog.get_logger(__name__)
@@ -76,6 +77,7 @@ async def validate_agent_output(
     timeout_seconds: float = 60.0,
     max_turns: int = 10,
     logger: structlog.stdlib.BoundLogger | None = None,
+    event_queue: AgentEventQueue | None = None,
 ) -> ValidatedOutput[T]:
     """Run `agent` with `schema` enforced, retrying once if validation fails.
 
@@ -107,6 +109,7 @@ async def validate_agent_output(
             timeout_seconds=timeout_seconds,
             max_turns=max_turns,
             logger=logger,
+            event_queue=event_queue,
         )
     except AgentTaskError as e:
         # The SDK raises ModelBehaviorError from inside the run; our wrapper
@@ -131,6 +134,7 @@ async def validate_agent_output(
             timeout_seconds=timeout_seconds,
             max_turns=max_turns,
             logger=logger,
+            event_queue=event_queue,
         )
     except AgentTaskError as e:
         if isinstance(e.__cause__, ModelBehaviorError):

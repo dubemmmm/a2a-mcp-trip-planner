@@ -7,7 +7,6 @@ fixture (autouse) handles that.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 
 import pytest
@@ -24,7 +23,14 @@ _APP_ENV_VARS = (
     "OPENAI_ORCHESTRATOR_MODEL",
     "SERPAPI_API_KEY",
     "GOOGLE_PLACES_API_KEY",
+    "GOOGLE_ROUTES_API_KEY",
     "OPENWEATHER_API_KEY",
+    "TRAVEL_A2A_URL",
+    "LOCAL_A2A_URL",
+    "TRANSIT_A2A_URL",
+    "WEB_PLAN_TIMEOUT_SECONDS",
+    "WEB_MAX_TURNS",
+    "WEB_MAX_CONCURRENT_PLANS",
     "LOG_LEVEL",
     "LOG_FORMAT",
 )

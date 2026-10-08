@@ -8,3 +8,4 @@ aiosqlite>=0.20
 mcp>=1.2
 uvicorn>=0.30
 a2a-sdk>=0.2
+starlette>=0.37

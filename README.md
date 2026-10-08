@@ -201,10 +201,25 @@ python -m mcp_servers.concierge
 Each agent ships a uvicorn-ready ASGI app at `a2a_servers.<agent>:_uvicorn_app`:
 
 ```bash
-uvicorn a2a_servers.local:_uvicorn_app --factory --host 0.0.0.0 --port 8001
-uvicorn a2a_servers.travel:_uvicorn_app --factory --host 0.0.0.0 --port 8002
-uvicorn a2a_servers.concierge:_uvicorn_app --factory --host 0.0.0.0 --port 8003
+uvicorn a2a_servers.local:_uvicorn_app --factory --env-file .env --host 0.0.0.0 --port 8001
+uvicorn a2a_servers.travel:_uvicorn_app --factory --env-file .env --host 0.0.0.0 --port 8002
+uvicorn a2a_servers.concierge:_uvicorn_app --factory --env-file .env --host 0.0.0.0 --port 8003
+uvicorn a2a_servers.transit:_uvicorn_app --factory --env-file .env --host 0.0.0.0 --port 8004
 ```
+
+### Run the public web app
+
+Start the Travel, Local Experience, and Transit A2A servers, then run:
+
+```bash
+uvicorn web.app:app --env-file .env --host 127.0.0.1 --port 8080 --reload
+```
+
+Open `http://127.0.0.1:8080`. The structured form calls the three specialist
+agents as tools and the Concierge aggregates their results into a validated
+`TripPlanResponse`. The UI renders budget, provider alerts, flight and hotel
+options, weather, daily activities, transport details, and booking next steps
+as dedicated components rather than displaying free-form Markdown.
 
 Each one exposes:
 - `GET /.well-known/agent-card.json` — Agent Card discovery

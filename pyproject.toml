@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 readme = "README.md"
 
 [tool.setuptools.packages.find]
-include = ["shared*", "agents_local*", "agents_travel*", "agents_transit*", "agents_concierge*", "mcp_servers*", "_helpers*", "a2a_servers", "a2a_client"]
+include = ["shared*", "agents_local*", "agents_travel*", "agents_transit*", "agents_concierge*", "mcp_servers*", "_helpers*", "a2a_servers", "a2a_client", "web*"]
 exclude = ["tests*"]
 
 [tool.pytest.ini_options]
@@ -55,7 +55,7 @@ files = ["shared", "agents_local"]
 exclude = ["shared/tests/"]
  
 [[tool.mypy.overrides]]
-module = ["agents.*", "mcp.*", "starlette.*", "uvicorn.*", "aiosqlite.*"]
+module = ["agents.*", "mcp.*", "starlette.*", "uvicorn.*", "aiosqlite.*", "google.protobuf.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

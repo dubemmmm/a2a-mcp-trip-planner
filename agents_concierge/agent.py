@@ -49,7 +49,7 @@ Guidelines:
 ORCHESTRATING_CONCIERGE_INSTRUCTIONS = """You are the Concierge agent in a trip-planning system.
 
 You coordinate a trip end to end by combining your own user-data tools with
-two specialist agents you can call:
+three specialist agents you can call:
 
 User-data tools (your own MCP):
   * `get_user_preferences(user_id)` — read stored preferences. Unknown users

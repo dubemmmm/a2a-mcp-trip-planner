@@ -30,6 +30,7 @@ from shared.a2a_client.awaiting import (
     await_task,
 )
 from shared.a2a_client.submission import TaskHandle
+from shared.agent_events import AgentEventQueue
 
 
 def _card() -> AgentCard:
@@ -93,6 +94,7 @@ def _handle(events: list[StreamResponse]) -> TaskHandle:
 
 # ---------- stream mode happy path ----------
 
+
 class TestStreamSuccess:
     async def test_completes_with_artifact(self) -> None:
         events = [
@@ -114,9 +116,7 @@ class TestStreamSuccess:
             id="t1",
             context_id="ctx",
             status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-            artifacts=[
-                Artifact(artifact_id="a1", parts=[Part(text="done")])
-            ],
+            artifacts=[Artifact(artifact_id="a1", parts=[Part(text="done")])],
         )
         events = [StreamResponse(task=task)]
         result = await await_task(_handle(events), timeout_seconds=2.0)
@@ -134,8 +134,34 @@ class TestStreamSuccess:
         assert result.artifacts_text == ("part one", "part two")
         assert "part one\npart two" in result.combined_text
 
+    async def test_forwards_live_status_and_artifact_events(self) -> None:
+        events = [
+            _task_event("t1", TaskState.TASK_STATE_SUBMITTED),
+            _status_update("t1", TaskState.TASK_STATE_WORKING),
+            _artifact_update("t1", "Live flight research"),
+            _status_update("t1", TaskState.TASK_STATE_COMPLETED),
+        ]
+        queue: AgentEventQueue = asyncio.Queue()
+
+        await await_task(
+            _handle(events),
+            timeout_seconds=2.0,
+            event_queue=queue,
+            event_agent_name="travel",
+        )
+
+        published = []
+        while not queue.empty():
+            published.append(queue.get_nowait())
+        statuses = [event.status for event in published if event.kind == "agent.status"]
+        assert statuses == ["submitted", "working", "completed"]
+        artifact = next(event for event in published if event.kind == "agent.artifact")
+        assert artifact.agent == "travel"
+        assert artifact.data["preview"] == "Live flight research"
+
 
 # ---------- stream mode failure paths ----------
+
 
 class TestStreamFailure:
     async def test_failed_state_raises(self) -> None:
@@ -186,6 +212,7 @@ class TestStreamFailure:
 
 # ---------- argument validation ----------
 
+
 class TestArgValidation:
     async def test_invalid_mode(self) -> None:
         with pytest.raises(ValueError, match="unknown mode"):
@@ -202,6 +229,7 @@ class TestArgValidation:
 
 # ---------- poll mode ----------
 
+
 class _PollClient:
     """Fake a2a-sdk Client that returns a scripted sequence of Task states."""
 
@@ -210,18 +238,16 @@ class _PollClient:
         self._task_id = task_id
         self.get_task_calls = 0
 
-    async def get_task(
-        self, request: GetTaskRequest, *, context: Any = None
-    ) -> Task:
+    async def get_task(self, request: GetTaskRequest, *, context: Any = None) -> Task:
         self.get_task_calls += 1
         state = self._states.pop(0) if self._states else TaskState.TASK_STATE_COMPLETED
         return Task(
             id=self._task_id,
             context_id="ctx",
             status=TaskStatus(state=state),
-            artifacts=[
-                Artifact(artifact_id="a1", parts=[Part(text="poll result")])
-            ] if state == TaskState.TASK_STATE_COMPLETED else [],
+            artifacts=[Artifact(artifact_id="a1", parts=[Part(text="poll result")])]
+            if state == TaskState.TASK_STATE_COMPLETED
+            else [],
         )
 
 
