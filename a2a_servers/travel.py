@@ -10,6 +10,10 @@ from a2a.types import AgentSkill
 
 from agents_travel.agent import TRAVEL_AGENT_NAME, build_travel_agent
 
+from economy.card import pricing_extension
+from economy.pricing import TRAVEL_PRICE_SHEET, PriceSheet, PricingPolicy
+from shared.config import get_settings
+
 from .scaffolding import build_a2a_app, build_agent_card
 
 TRAVEL_AGENT_DESCRIPTION = (
@@ -59,15 +63,18 @@ def _skills() -> list[AgentSkill]:
     ]
 
 
-def build_app(*, public_url: str = "http://localhost:8002") -> object:
+def build_app(
+    *, public_url: str = "http://localhost:8002", price_sheet: PriceSheet = TRAVEL_PRICE_SHEET
+) -> object:
     agent = build_travel_agent()
     card = build_agent_card(
         name=TRAVEL_AGENT_NAME,
         description=TRAVEL_AGENT_DESCRIPTION,
         url=public_url,
         skills=_skills(),
+        extensions=[pricing_extension(price_sheet, ledger_url=get_settings().ledger_url)],
     )
-    return build_a2a_app(agent, card)
+    return build_a2a_app(agent, card, pricing=PricingPolicy(price_sheet))
 
 
 def _uvicorn_app() -> object:

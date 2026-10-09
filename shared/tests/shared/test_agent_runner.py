@@ -15,12 +15,15 @@ import pytest
 from agents import Agent
 from agents.items import ToolCallItem, ToolCallOutputItem
 from agents.stream_events import RunItemStreamEvent
+from agents.usage import Usage
 
 from shared.agent_runner import (
     DEFAULT_TIMEOUT_SECONDS,
     AgentTaskError,
     AgentTaskTimeout,
+    RunUsage,
     run_agent_task,
+    usage_of,
 )
 from shared.agent_events import AgentEventQueue
 from shared.logging_setup import setup_logger
@@ -211,3 +214,57 @@ class TestRealRunner:
         ]
         assert events[1].data["tool_name"] == "call_travel_agent"
         assert events[2].data["preview"] == "Flights ready"
+
+
+# ---------- usage metering ----------
+
+
+def _tool_call(agent: Agent[None], name: str, call_id: str) -> ToolCallItem:
+    return ToolCallItem(
+        agent=agent,
+        raw_item={"type": "function_call", "name": name, "call_id": call_id, "arguments": "{}"},
+    )
+
+
+class TestUsage:
+    def test_result_without_usage_meters_zero(self) -> None:
+        usage = usage_of(object())
+        assert usage == RunUsage()
+        assert usage.total_tokens == 0
+
+    def test_counts_tokens_and_tool_calls_by_name(self) -> None:
+        agent = _bare_agent()
+
+        class _Result:
+            context_wrapper = type(
+                "W", (), {"usage": Usage(requests=3, input_tokens=1_200, output_tokens=300)}
+            )()
+            new_items = [
+                _tool_call(agent, "search_flights", "1"),
+                _tool_call(agent, "search_flights", "2"),
+                _tool_call(agent, "search_hotels", "3"),
+                ToolCallOutputItem(
+                    agent=agent,
+                    raw_item={"type": "function_call_output", "call_id": "1", "output": "x"},
+                    output="x",
+                ),
+            ]
+
+        usage = usage_of(_Result())
+        assert (usage.requests, usage.input_tokens, usage.output_tokens) == (3, 1_200, 300)
+        assert usage.total_tokens == 1_500
+        assert usage.tool_calls == {"search_flights": 2, "search_hotels": 1}
+        assert usage.to_dict()["tool_calls"] == {"search_flights": 2, "search_hotels": 1}
+
+    async def test_outcome_carries_usage_from_a_real_run(self, env: None) -> None:
+        from _helpers.fake_model import FakeModel
+
+        fake = FakeModel(
+            responses=["Hello."],
+            usage=Usage(requests=1, input_tokens=900, output_tokens=40, total_tokens=940),
+        )
+        agent = Agent[None](name="metered", instructions="hi", model=fake)
+        outcome = await run_agent_task(agent, "hi")
+        assert (outcome.usage.input_tokens, outcome.usage.output_tokens) == (900, 40)
+        assert outcome.usage.requests == 1
+        assert outcome.usage.tool_calls == {}

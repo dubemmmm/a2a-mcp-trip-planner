@@ -296,6 +296,8 @@ economy/                      # agent economy: the ledger and its service
 ├── ledger.py                 # Ledger — wallets, quotes, escrowed reservations, journal
 ├── service.py                # HTTP service on :8005, agent-key auth, expiry sweeper
 ├── client.py                 # LedgerClient — typed errors, fail-closed
+├── pricing.py                # PricingPolicy + price sheets — quote ceilings, metered charges
+├── card.py                   # the pricing extension on Agent Cards
 ├── models.py
 └── errors.py
 
@@ -324,6 +326,6 @@ orchestration on top.
 | 5.4 Input-required handling | deferred (needs the server-side pause/resume) |
 | 6   Concierge orchestration (delegation tools + orchestrating agent) | in progress |
 | E1  Agent economy: ledger + service | done |
-| E2  Pricing on Agent Cards + metering | next |
-| E3  Paid delegation (quote → reserve → settle) | planned |
+| E2  Pricing on Agent Cards + metering | done |
+| E3  Paid delegation (quote → reserve → settle) | next |
 | E4  Budget-aware Concierge + wallet UI | planned |

@@ -33,8 +33,10 @@ class FakeModelExhausted(RuntimeError):
 class FakeModel(Model):
     """Returns canned text responses one turn at a time."""
 
-    def __init__(self, responses: list[str]) -> None:
+    def __init__(self, responses: list[str], *, usage: Usage | None = None) -> None:
         self._queue: deque[str] = deque(responses)
+        # Token usage reported on every response; the SDK sums it per run.
+        self._usage = usage
         self.calls: list[dict[str, Any]] = []  # introspection for tests
 
     async def get_response(
@@ -75,7 +77,7 @@ class FakeModel(Model):
         )
         return ModelResponse(
             output=[message],
-            usage=Usage(),
+            usage=self._usage or Usage(),
             response_id=f"resp_{len(self.calls)}",
         )
 

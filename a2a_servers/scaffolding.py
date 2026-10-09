@@ -12,6 +12,12 @@ which:
     `TaskUpdater`, so streaming clients see progress in real time,
   * publishes the final response as an artifact.
 
+When the agent is priced (`pricing=` a `PricingPolicy`), the executor also
+meters each completed run — tokens and tool calls from `RunUsage` — prices it
+against the skill the caller asked for, and attaches the result to the
+artifact's metadata under `"economy"`. Phase 2 only meters; settling the
+charge against a ledger reservation comes with paid delegation.
+
 Task state is held in `InMemoryTaskStore` — sufficient for Layer 4. When we
 add input-required in a later layer (or do Layer 7 reliability work), this
 becomes the swap point for `DatabaseTaskStore`.
@@ -22,6 +28,8 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any
 
+import structlog
+
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -30,6 +38,7 @@ from a2a.server.tasks import InMemoryTaskStore, TaskUpdater
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
+    AgentExtension,
     AgentInterface,
     AgentSkill,
     Message,
@@ -41,13 +50,18 @@ from a2a.types import (
 )
 from a2a.utils.constants import DEFAULT_RPC_URL
 from agents import Agent
+from google.protobuf.json_format import MessageToDict
 from starlette.applications import Starlette
 
+from economy.pricing import PricingPolicy
 from shared.agent_runner import (
     AgentTaskError,
+    AgentTaskOutcome,
     AgentTaskTimeout,
     run_agent_task,
 )
+
+_LOGGER = structlog.get_logger(__name__)
 
 DEFAULT_PROTOCOL_VERSION = "0.4.0"
 DEFAULT_INPUT_MODES = ("text/plain",)
@@ -62,12 +76,14 @@ def build_agent_card(
     skills: Iterable[AgentSkill],
     version: str = "0.1.0",
     streaming: bool = True,
+    extensions: Iterable[AgentExtension] = (),
 ) -> AgentCard:
     """Construct an `AgentCard` proto with sensible defaults.
 
     `url` is the public base URL the card advertises (e.g. http://localhost:8001).
     The JSON-RPC endpoint is mounted at "/" by default, which matches the
-    `DEFAULT_RPC_URL` constant the SDK uses everywhere.
+    `DEFAULT_RPC_URL` constant the SDK uses everywhere. `extensions` are
+    declared under `capabilities` (e.g. the pricing extension).
     """
     return AgentCard(
         name=name,
@@ -80,7 +96,7 @@ def build_agent_card(
                 protocol_version=DEFAULT_PROTOCOL_VERSION,
             )
         ],
-        capabilities=AgentCapabilities(streaming=streaming),
+        capabilities=AgentCapabilities(streaming=streaming, extensions=list(extensions)),
         default_input_modes=list(DEFAULT_INPUT_MODES),
         default_output_modes=list(DEFAULT_OUTPUT_MODES),
         skills=list(skills),
@@ -101,10 +117,12 @@ class OpenAIAgentExecutor(AgentExecutor):
         *,
         timeout_seconds: float = 120.0,
         max_turns: int = 10,
+        pricing: PricingPolicy | None = None,
     ) -> None:
         self._agent = agent
         self._timeout_seconds = timeout_seconds
         self._max_turns = max_turns
+        self._pricing = pricing
 
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
@@ -162,8 +180,36 @@ class OpenAIAgentExecutor(AgentExecutor):
         await updater.add_artifact(
             parts=[Part(text=final_text)],
             name=f"{self._agent.name}-response",
+            metadata=self._meter(context, outcome),
         )
         await updater.complete()
+
+    def _meter(self, context: RequestContext, outcome: AgentTaskOutcome) -> dict[str, Any] | None:
+        """Price the finished run and return the artifact's economy metadata."""
+        if self._pricing is None:
+            return None
+        skill_id = _requested_skill(context, self._pricing)
+        charge = self._pricing.charge(
+            skill_id, outcome.usage, ceiling_mc=self._pricing.quote(skill_id)
+        )
+        self._pricing.record(skill_id, outcome.usage)
+        _LOGGER.info(
+            "task_metered",
+            agent=self._agent.name,
+            task_id=context.task_id,
+            skill_id=skill_id,
+            charged_mc=charge.charged_mc,
+            uncapped_mc=charge.uncapped_mc,
+            ceiling_mc=charge.ceiling_mc,
+            **outcome.usage.to_dict(),
+        )
+        return {
+            "economy": {
+                "status": "metered",
+                "charge": charge.model_dump(),
+                "usage": outcome.usage.to_dict(),
+            }
+        }
 
     async def cancel(
         self, context: RequestContext, event_queue: EventQueue
@@ -177,6 +223,20 @@ class OpenAIAgentExecutor(AgentExecutor):
             context_id=context.context_id or "",
         )
         await updater.cancel()
+
+
+def _requested_skill(context: RequestContext, pricing: PricingPolicy) -> str:
+    """The priced skill the caller asked for, else the sheet's default.
+
+    `submit_task` puts the skill id in the message metadata; the A2A spec
+    leaves skill routing to the agent, so an absent or unknown id is priced
+    as the agent's default skill rather than rejected.
+    """
+    message = context.message
+    requested = MessageToDict(message.metadata).get("skill_id") if message else None
+    if isinstance(requested, str) and requested in pricing.sheet.skills:
+        return requested
+    return pricing.sheet.default_skill
 
 
 def _open_mcp_servers(agent: Agent[Any]) -> "_MCPServersContext":
@@ -236,6 +296,7 @@ def build_a2a_app(
     *,
     timeout_seconds: float = 120.0,
     max_turns: int = 10,
+    pricing: PricingPolicy | None = None,
 ) -> Starlette:
     """Construct the Starlette app exposing `agent` over A2A.
 
@@ -245,7 +306,7 @@ def build_a2a_app(
     """
     task_store = InMemoryTaskStore()
     executor = OpenAIAgentExecutor(
-        agent, timeout_seconds=timeout_seconds, max_turns=max_turns
+        agent, timeout_seconds=timeout_seconds, max_turns=max_turns, pricing=pricing
     )
     request_handler = DefaultRequestHandler(
         agent_executor=executor,

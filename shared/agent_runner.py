@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass
+from collections import Counter
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 import structlog
@@ -51,11 +53,61 @@ class AgentTaskTimeout(AgentTaskError):
 
 
 @dataclass(frozen=True)
+class RunUsage:
+    """What one run consumed: model tokens and tool calls by tool name.
+
+    This is the meter the agent economy prices from. Tool calls are counted
+    here, in the agent's process, rather than inside the MCP servers: those
+    run as stdio subprocesses, so a counter there would never reach the code
+    that charges for the task.
+    """
+
+    requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    tool_calls: Mapping[str, int] = field(default_factory=dict)
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "requests": self.requests,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "tool_calls": dict(self.tool_calls),
+        }
+
+
+@dataclass(frozen=True)
 class AgentTaskOutcome:
     """A successful run plus the metadata we logged about it."""
 
     result: RunResult | RunResultStreaming
     duration_seconds: float
+    usage: RunUsage = field(default_factory=RunUsage)
+
+
+def usage_of(result: object) -> RunUsage:
+    """Read token usage and tool calls off an SDK run result.
+
+    Tolerates results without usage (test doubles, partial results) by
+    reporting zero rather than failing the run it describes.
+    """
+    wrapper = getattr(result, "context_wrapper", None)
+    sdk_usage = getattr(wrapper, "usage", None)
+    tools: Counter[str] = Counter(
+        item.tool_name or "tool"
+        for item in getattr(result, "new_items", ())
+        if isinstance(item, ToolCallItem)
+    )
+    return RunUsage(
+        requests=int(getattr(sdk_usage, "requests", 0) or 0),
+        input_tokens=int(getattr(sdk_usage, "input_tokens", 0) or 0),
+        output_tokens=int(getattr(sdk_usage, "output_tokens", 0) or 0),
+        tool_calls=dict(tools),
+    )
 
 
 async def run_agent_task(
@@ -153,7 +205,14 @@ async def run_agent_task(
         ) from e
 
     duration = time.monotonic() - started_at
-    log.info("agent_task_success", duration_seconds=duration)
+    usage = usage_of(result)
+    log.info(
+        "agent_task_success",
+        duration_seconds=duration,
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        tool_calls=dict(usage.tool_calls),
+    )
     emit_agent_event(
         event_queue,
         kind="agent.status",
@@ -162,7 +221,7 @@ async def run_agent_task(
         message=f"{agent.name.title()} finished the plan",
         data={"duration_seconds": duration},
     )
-    return AgentTaskOutcome(result=result, duration_seconds=duration)
+    return AgentTaskOutcome(result=result, duration_seconds=duration, usage=usage)
 
 
 async def _run_streamed(
