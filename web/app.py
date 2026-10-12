@@ -22,6 +22,9 @@ from starlette.staticfiles import StaticFiles
 from agents_concierge.agent import build_orchestrating_concierge
 from agents_concierge.delegation import build_delegation_tools
 from agents_concierge.models import TripPlanResponse
+from economy.client import LedgerClient
+from economy.payer import Payer
+from economy.policy import SpendPolicy
 from shared.a2a_client import AgentDiscovery
 from shared.agent_events import AgentEventQueue, emit_agent_event
 from shared.agent_runner import AgentTaskError, AgentTaskTimeout
@@ -57,6 +60,19 @@ async def _run_agent_plan(
     event_queue: AgentEventQueue | None = None,
 ) -> PlanResult:
     settings = get_settings()
+    # With a Concierge key, each plan is one trip with its own credit budget;
+    # without one, paid specialists are simply reported as not called.
+    ledger = LedgerClient.from_settings("concierge", settings)
+    payer = (
+        Payer(
+            ledger,
+            SpendPolicy(max_call_mc=settings.economy_max_call_mc),
+            trip_id=f"web-{uuid4().hex[:12]}",
+            trip_budget_mc=settings.economy_max_trip_mc,
+        )
+        if ledger is not None
+        else None
+    )
     tools = build_delegation_tools(
         travel_url=settings.travel_a2a_url,
         local_url=settings.local_a2a_url,
@@ -64,19 +80,24 @@ async def _run_agent_plan(
         discovery=discovery,
         timeout_seconds=min(settings.web_plan_timeout_seconds, 180.0),
         event_queue=event_queue,
+        payer=payer,
     )
     agent = build_orchestrating_concierge(tools)
     mcp_server: Any = agent.mcp_servers[0]
     started_at = time.monotonic()
-    async with mcp_server:
-        validated = await validate_agent_output(
-            agent,
-            trip.to_agent_prompt(),
-            TripPlanResponse,
-            timeout_seconds=settings.web_plan_timeout_seconds,
-            max_turns=settings.web_max_turns,
-            event_queue=event_queue,
-        )
+    try:
+        async with mcp_server:
+            validated = await validate_agent_output(
+                agent,
+                trip.to_agent_prompt(),
+                TripPlanResponse,
+                timeout_seconds=settings.web_plan_timeout_seconds,
+                max_turns=settings.web_max_turns,
+                event_queue=event_queue,
+            )
+    finally:
+        if ledger is not None:
+            await ledger.close()
     return PlanResult(
         plan=validated.value,
         duration_seconds=time.monotonic() - started_at,

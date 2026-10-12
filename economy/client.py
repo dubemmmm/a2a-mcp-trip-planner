@@ -23,6 +23,8 @@ from typing import Any, Self
 
 import httpx
 
+from shared.config import Settings
+
 from .errors import ERRORS_BY_CODE, LedgerError, LedgerUnavailable
 from .models import Quote, Reservation, Transfer, WalletStatus
 
@@ -48,6 +50,18 @@ class LedgerClient:
         self._owns_http = http is None
         self._http = http or httpx.AsyncClient(timeout=timeout_seconds)
         self.agent_id = agent_id
+
+    @classmethod
+    def from_settings(cls, agent_id: str, settings: Settings) -> "LedgerClient | None":
+        """A client acting as `agent_id`, or None if that agent has no key.
+
+        No key means the agent is not part of the economy: specialists then
+        run free (no pricing on their card), the Concierge pays no one.
+        """
+        secret = getattr(settings, f"agent_key_{agent_id}", None)
+        if secret is None:
+            return None
+        return cls(settings.ledger_url, agent_id=agent_id, agent_key=secret.get_secret_value())
 
     async def __aenter__(self) -> Self:
         return self

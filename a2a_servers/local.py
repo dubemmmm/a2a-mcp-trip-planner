@@ -11,6 +11,8 @@ from a2a.types import AgentSkill
 from agents_local.agent import LOCAL_AGENT_NAME, build_local_agent
 
 from economy.card import pricing_extension
+from economy.client import LedgerClient
+from economy.payee import Payee
 from economy.pricing import LOCAL_PRICE_SHEET, PriceSheet, PricingPolicy
 from shared.config import get_settings
 
@@ -64,7 +66,10 @@ def _skills() -> list[AgentSkill]:
 
 
 def build_app(
-    *, public_url: str = "http://localhost:8001", price_sheet: PriceSheet = LOCAL_PRICE_SHEET
+    *,
+    public_url: str = "http://localhost:8001",
+    price_sheet: PriceSheet = LOCAL_PRICE_SHEET,
+    ledger: LedgerClient | None = None,
 ) -> object:
     """Build the Starlette ASGI app for this server.
 
@@ -77,11 +82,18 @@ def build_app(
         description=LOCAL_AGENT_DESCRIPTION,
         url=public_url,
         skills=_skills(),
-        extensions=[pricing_extension(price_sheet, ledger_url=get_settings().ledger_url)],
+        # Only an agent that can take payment advertises a price.
+        extensions=(
+            [pricing_extension(price_sheet, ledger_url=get_settings().ledger_url)]
+            if ledger is not None
+            else []
+        ),
     )
-    return build_a2a_app(agent, card, pricing=PricingPolicy(price_sheet))
+    pricing = PricingPolicy(price_sheet)
+    payee = Payee(ledger, pricing) if ledger is not None else None
+    return build_a2a_app(agent, card, pricing=pricing, payee=payee)
 
 
 def _uvicorn_app() -> object:
     """Factory used by uvicorn (`a2a_servers.local:_uvicorn_app`) via --factory."""
-    return build_app()
+    return build_app(ledger=LedgerClient.from_settings("local", get_settings()))

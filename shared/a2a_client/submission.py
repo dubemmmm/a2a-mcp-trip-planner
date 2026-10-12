@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import AsyncIterator
+from collections.abc import Mapping
+from typing import Any, AsyncIterator
 
 import structlog
 from a2a.client import Client
@@ -98,6 +99,7 @@ async def submit_task(
     skill_id: str,
     payload: str,
     message_id: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
 ) -> TaskHandle:
     """Send a text task to the agent described by `agent_card`.
 
@@ -109,6 +111,8 @@ async def submit_task(
         payload: The user-facing text to send. Skill name + payload together
             tell the remote agent what to do.
         message_id: Optional caller-supplied ID. Generated when omitted.
+        metadata: Extra message metadata merged alongside the skill id
+            (e.g. the economy's `{"pricing": {"reservation_id": ...}}`).
 
     Returns:
         A `TaskHandle` carrying the open event stream. Consume it with
@@ -128,7 +132,7 @@ async def submit_task(
             message_id=msg_id,
             role=Role.ROLE_USER,
             parts=[Part(text=payload)],
-            metadata=_skill_metadata(skill_id),
+            metadata=_skill_metadata(skill_id, metadata),
         )
     )
     _LOGGER.info(
@@ -147,7 +151,7 @@ async def submit_task(
     )
 
 
-def _skill_metadata(skill_id: str) -> object:
+def _skill_metadata(skill_id: str, extra: Mapping[str, Any] | None = None) -> object:
     """Attach the skill id as message metadata.
 
     The A2A spec leaves skill routing to the agent's discretion (the remote
@@ -158,5 +162,5 @@ def _skill_metadata(skill_id: str) -> object:
     from google.protobuf import struct_pb2
 
     s = struct_pb2.Struct()
-    s.update({"skill_id": skill_id})
+    s.update({**(extra or {}), "skill_id": skill_id})
     return s

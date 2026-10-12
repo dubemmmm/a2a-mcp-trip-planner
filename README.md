@@ -224,6 +224,20 @@ allowance (`ECONOMY_DAILY_ALLOWANCE_MC`, in millicredits). A background sweeper
 returns holds nobody settled. Amounts are integers in millicredits
 (1 credit = 1000 mc). Agents call it through `economy.client.LedgerClient`.
 
+An agent joins the economy when its `AGENT_KEY_<NAME>` is set:
+
+- A **specialist** with a key publishes its prices on its Agent Card, answers
+  quote requests, and only runs tasks that carry a held reservation. It
+  captures the metered cost (tokens + tool calls, capped at the quote) on
+  success and releases the hold on failure or cancellation. Without a key it
+  runs free and its card shows no prices.
+- The **Concierge** with a key pays per trip: for each priced specialist it
+  asks for a quote, applies its spend policy (`ECONOMY_MAX_CALL_MC` per call,
+  `ECONOMY_MAX_TRIP_MC` per trip, plus the daily cap and balance), counters
+  once if the quote is too high, reserves, delegates, and settles. A call it
+  cannot afford is not an error: the tool returns `NOT CALLED: ...` with the
+  reason, and successful paid calls end with a receipt line.
+
 ### Run the public web app
 
 Start the Travel, Local Experience, and Transit A2A servers, then run:
@@ -298,6 +312,10 @@ economy/                      # agent economy: the ledger and its service
 ├── client.py                 # LedgerClient — typed errors, fail-closed
 ├── pricing.py                # PricingPolicy + price sheets — quote ceilings, metered charges
 ├── card.py                   # the pricing extension on Agent Cards
+├── protocol.py               # quote / reservation / receipt shapes carried in A2A metadata
+├── policy.py                 # SpendPolicy — accept, counter once, or reject
+├── payer.py                  # Concierge side: quote, decide, reserve, settle (per trip)
+├── payee.py                  # specialist side: quote, verify payment, capture or release
 ├── models.py
 └── errors.py
 
@@ -327,5 +345,5 @@ orchestration on top.
 | 6   Concierge orchestration (delegation tools + orchestrating agent) | in progress |
 | E1  Agent economy: ledger + service | done |
 | E2  Pricing on Agent Cards + metering | done |
-| E3  Paid delegation (quote → reserve → settle) | next |
-| E4  Budget-aware Concierge + wallet UI | planned |
+| E3  Paid delegation (quote → reserve → settle) | done |
+| E4  Budget-aware Concierge + wallet UI | next |

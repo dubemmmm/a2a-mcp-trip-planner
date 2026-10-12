@@ -74,6 +74,9 @@ class Settings(BaseSettings):
     economy_daily_cap_mc: int = Field(default=50_000, ge=0)
     economy_hold_seconds: float = Field(default=180.0, gt=0)
     economy_sweep_interval_seconds: float = Field(default=30.0, gt=0)
+    # Concierge spend policy: caps on a single delegation and on one trip.
+    economy_max_call_mc: int = Field(default=3_000, gt=0)
+    economy_max_trip_mc: int = Field(default=8_000, ge=0)
 
     # -- Public web app --
     web_plan_timeout_seconds: float = Field(default=360.0, gt=0)
